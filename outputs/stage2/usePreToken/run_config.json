@@ -1,0 +1,42 @@
+{
+  "cache_path": "data/cache/afd_stage2_cache.pt",
+  "adaptor_checkpoint": "outputs/stage1/checkpoint_epoch_14.pt",
+  "output_dir": "outputs/stage2/usePretoken",
+  "resume_from": null,
+  "auto_resume": false,
+  "llm_model_name": "meta-llama/Llama-3.1-8B-Instruct",
+  "llm_cache_dir": "models",
+  "batch_size": 8,
+  "epochs": 10,
+  "learning_rate": 1e-05,
+  "weight_decay": 0.01,
+  "data_ratio": 0.2,
+  "validation_split": 0.2,
+  "test_split": 0.2,
+  "max_length": 512,
+  "lora_r": 8,
+  "lora_alpha": 16,
+  "lora_dropout": 0.05,
+  "lora_target_modules": [
+    "q_proj",
+    "k_proj",
+    "v_proj",
+    "o_proj"
+  ],
+  "num_workers": 4,
+  "seed": 42,
+  "local_files_only": false,
+  "use_pretoken": true,
+  "use_gradient_checkpointing": false,
+  "disable_chat_template": false,
+  "save_every_epoch": false,
+  "log_file_name": "train_log.jsonl",
+  "adaptor_config": {
+    "protein_dim": 5120,
+    "output_dim": 4096,
+    "query_length": 100,
+    "hidden_dim": 8192,
+    "num_heads": 8,
+    "dropout": 0.1
+  }
+}
