@@ -9,3 +9,9 @@
 {"timestamp": "2026-04-25T00:22:54", "epoch": 9, "train_loss": 0.8189173340797424, "validation_loss": 1.0088434219360352}
 {"timestamp": "2026-04-25T01:47:26", "epoch": 10, "train_loss": 0.8003676533699036, "validation_loss": 1.0144730806350708}
 {"timestamp": "2026-04-25T02:00:12", "test_loss": 1.0338737964630127}
+{"timestamp": "2026-04-25T15:56:57", "epoch": 11, "train_loss": 0.8248071074485779, "validation_loss": 1.0002315044403076}
+{"timestamp": "2026-04-25T17:22:30", "epoch": 12, "train_loss": 0.7889048457145691, "validation_loss": 1.0018671751022339}
+{"timestamp": "2026-04-25T18:47:50", "epoch": 13, "train_loss": 0.7566816806793213, "validation_loss": 1.0077707767486572}
+{"timestamp": "2026-04-25T20:13:25", "epoch": 14, "train_loss": 0.7402311563491821, "validation_loss": 1.0161687135696411}
+{"timestamp": "2026-04-25T21:38:53", "epoch": 15, "train_loss": 0.7276989221572876, "validation_loss": 1.0221617221832275}
+{"timestamp": "2026-04-25T21:51:55", "test_loss": 1.0439472198486328}
