@@ -18,7 +18,7 @@ from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import DataLoader, Dataset
 from torch.utils.data.distributed import DistributedSampler
 from tqdm import tqdm
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer, get_cosine_schedule_with_warmup
 
 from pretrain import QFormerProteinAdaptor, build_adaptor_from_checkpoint
 
@@ -41,6 +41,7 @@ class Stage2Config:
     batch_size: int
     epochs: int
     learning_rate: float
+    adaptor_learning_rate: float
     weight_decay: float
     data_ratio: float
     validation_split: float
@@ -55,6 +56,7 @@ class Stage2Config:
     local_files_only: bool
     use_pretoken: bool
     use_gradient_checkpointing: bool
+    warmup_ratio: float
     disable_chat_template: bool
     save_every_epoch: bool
     log_file_name: str
@@ -85,7 +87,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Stage 2 LoRA fine-tuning with prepared antibody caches.")
     parser.add_argument("--cache-path", type=Path, default=Path("data/cache/afd_stage2_cache.pt"))
     parser.add_argument("--adaptor-checkpoint", type=Path, required=True)
-    parser.add_argument("--output-dir", type=Path, default=Path("outputs/stage2"))
+    parser.add_argument("--output-dir", type=Path, default=Path("outputs/stage2/"))
     parser.add_argument("--resume-from", type=Path, default=None)
     parser.add_argument("--auto-resume", action="store_true")
     parser.add_argument("--llm-model-name", type=str, default="meta-llama/Llama-3.1-8B-Instruct")
@@ -93,21 +95,23 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--epochs", type=int, default=10)
     parser.add_argument("--learning-rate", type=float, default=1e-5)
+    parser.add_argument("--adaptor-learning-rate", type=float, default=5e-5)
     parser.add_argument("--weight-decay", type=float, default=1e-2)
-    parser.add_argument("--data-ratio", type=float, default=1.0)
-    parser.add_argument("--validation-split", type=float, default=0.1)
+    parser.add_argument("--data-ratio", type=float, default=0.2)
+    parser.add_argument("--validation-split", type=float, default=0.2)
     parser.add_argument("--test-split", type=float, default=0.2)
     parser.add_argument("--max-length", type=int, default=512)
     parser.add_argument("--lora-r", type=int, default=8)
     parser.add_argument("--lora-alpha", type=int, default=16)
     parser.add_argument("--lora-dropout", type=float, default=0.05)
     parser.add_argument("--lora-target-modules", nargs="+", default=["q_proj", "k_proj", "v_proj", "o_proj"])
-    parser.add_argument("--num-workers", type=int, default=0)
+    parser.add_argument("--num-workers", type=int, default=4)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--local-files-only", action="store_true")
     parser.add_argument("--use-pretoken", dest="use_pretoken", action="store_true")
     parser.add_argument("--no-pretoken", dest="use_pretoken", action="store_false")
     parser.add_argument("--use-gradient-checkpointing", action="store_true")
+    parser.add_argument("--warmup-ratio", type=float, default=0.1)
     parser.add_argument("--disable-chat-template", action="store_true")
     parser.add_argument("--save-every-epoch", action="store_true")
     parser.add_argument("--log-file-name", type=str, default="train_log.jsonl")
@@ -124,6 +128,10 @@ def build_config(args: argparse.Namespace) -> Stage2Config:
         raise ValueError("test_split must be in [0.0, 1.0).")
     if args.validation_split + args.test_split >= 1.0:
         raise ValueError("validation_split + test_split must be smaller than 1.0.")
+    if args.adaptor_learning_rate <= 0:
+        raise ValueError("adaptor_learning_rate must be positive.")
+    if not 0.0 <= args.warmup_ratio < 1.0:
+        raise ValueError("warmup_ratio must be in [0.0, 1.0).")
 
     return Stage2Config(
         cache_path=args.cache_path,
@@ -136,6 +144,7 @@ def build_config(args: argparse.Namespace) -> Stage2Config:
         batch_size=args.batch_size,
         epochs=args.epochs,
         learning_rate=args.learning_rate,
+        adaptor_learning_rate=args.adaptor_learning_rate,
         weight_decay=args.weight_decay,
         data_ratio=args.data_ratio,
         validation_split=args.validation_split,
@@ -150,6 +159,7 @@ def build_config(args: argparse.Namespace) -> Stage2Config:
         local_files_only=args.local_files_only,
         use_pretoken=args.use_pretoken,
         use_gradient_checkpointing=args.use_gradient_checkpointing,
+        warmup_ratio=args.warmup_ratio,
         disable_chat_template=args.disable_chat_template,
         save_every_epoch=args.save_every_epoch,
         log_file_name=args.log_file_name,
@@ -457,16 +467,16 @@ def build_model_inputs(
     embedder = base_llm.get_input_embeddings()
     embedding_dtype = embedder.weight.dtype
     antibody_embeddings = batch["antibody_embeddings"].to(device=device, dtype=torch.float32)
-
-    with torch.no_grad():
-        # Restore fixed-length pre_embeddings from the cached H/L-concatenated antibody vectors.
+    prefix_embeddings = None
+    prefix_length = 0
+    if use_pretoken:
+        # Stage 2 can continue adapting the antibody prefix projection, so gradients must flow here.
         prefix_embeddings = adaptor(antibody_embeddings).to(dtype=embedding_dtype)
-
-    prefix_length = prefix_embeddings.size(1)
-    if max_length <= prefix_length + 1:
-        raise ValueError(
-            f"max_length={max_length} is too small for prefix_length={prefix_length}. Increase --max-length."
-        )
+        prefix_length = prefix_embeddings.size(1)
+        if max_length <= prefix_length + 1:
+            raise ValueError(
+                f"max_length={max_length} is too small for prefix_length={prefix_length}. Increase --max-length."
+            )
 
     eos_token_id = tokenizer.eos_token_id if tokenizer.eos_token_id is not None else tokenizer.pad_token_id
     if eos_token_id is None:
@@ -550,13 +560,17 @@ def save_checkpoint(
     epoch: int,
     config: Stage2Config,
     llm: torch.nn.Module,
+    adaptor: torch.nn.Module,
     tokenizer: AutoTokenizer,
     optimizer: torch.optim.Optimizer,
+    scheduler: torch.optim.lr_scheduler.LRScheduler,
 ) -> None:
     state_payload = {
         "epoch": epoch,
         "config": asdict(config),
+        "adaptor_state": unwrap_model(adaptor).state_dict(),
         "optimizer": optimizer.state_dict(),
+        "scheduler": scheduler.state_dict(),
     }
     torch.save(state_payload, output_dir / f"checkpoint_epoch_{epoch}.pt")
     adapter_dir = output_dir / f"lora_epoch_{epoch}"
@@ -584,17 +598,39 @@ def get_adapter_dir_for_checkpoint(checkpoint_path: Path) -> Path:
 
 def load_stage2_training_state(
     checkpoint_path: Path,
+    adaptor: torch.nn.Module,
     optimizer: torch.optim.Optimizer,
+    scheduler: torch.optim.lr_scheduler.LRScheduler,
     device: torch.device,
 ) -> int:
     checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+    adaptor_state = checkpoint.get("adaptor_state")
+    if adaptor_state is not None:
+        unwrap_model(adaptor).load_state_dict(adaptor_state, strict=True)
     optimizer.load_state_dict(checkpoint["optimizer"])
+    scheduler_state = checkpoint.get("scheduler")
+    if scheduler_state is not None:
+        scheduler.load_state_dict(scheduler_state)
     for state in optimizer.state.values():
         for key, value in state.items():
             if torch.is_tensor(value):
                 state[key] = value.to(device)
     resumed_epoch = int(checkpoint["epoch"])
     return resumed_epoch + 1
+
+
+def build_scheduler(
+    optimizer: torch.optim.Optimizer,
+    train_loader: DataLoader,
+    config: Stage2Config,
+) -> torch.optim.lr_scheduler.LRScheduler:
+    total_training_steps = max(1, len(train_loader) * config.epochs)
+    warmup_steps = int(total_training_steps * config.warmup_ratio)
+    return get_cosine_schedule_with_warmup(
+        optimizer=optimizer,
+        num_warmup_steps=warmup_steps,
+        num_training_steps=total_training_steps,
+    )
 
 
 def evaluate(
@@ -612,6 +648,7 @@ def evaluate(
         return None
 
     llm.eval()
+    adaptor.eval()
     loss_sum = torch.tensor(0.0, device=device)
     batch_count = torch.tensor(0.0, device=device)
     with torch.no_grad():
@@ -715,9 +752,9 @@ def train() -> None:
     )
 
     adaptor = adaptor.to(device)
-    adaptor.eval()
+    adaptor.train()
     for parameter in adaptor.parameters():
-        parameter.requires_grad = False
+        parameter.requires_grad = config.use_pretoken
 
     llm_hidden_dim = unwrap_model(llm).get_input_embeddings().weight.shape[1]
     if int(adaptor_config["output_dim"]) != int(llm_hidden_dim):
@@ -728,12 +765,21 @@ def train() -> None:
 
     if is_distributed():
         llm = DDP(llm, device_ids=[local_rank], output_device=local_rank, find_unused_parameters=False) if device.type == "cuda" else DDP(llm)
+        adaptor = DDP(adaptor, device_ids=[local_rank], output_device=local_rank, find_unused_parameters=False) if device.type == "cuda" else DDP(adaptor)
 
-    trainable_parameters = [parameter for parameter in llm.parameters() if parameter.requires_grad]
-    optimizer = torch.optim.AdamW(trainable_parameters, lr=config.learning_rate, weight_decay=config.weight_decay)
+    llm_trainable_parameters = [parameter for parameter in llm.parameters() if parameter.requires_grad]
+    adaptor_trainable_parameters = [parameter for parameter in adaptor.parameters() if parameter.requires_grad]
+    optimizer_parameter_groups: list[dict[str, Any]] = [
+        {"params": llm_trainable_parameters, "lr": config.learning_rate},
+    ]
+    if adaptor_trainable_parameters:
+        optimizer_parameter_groups.append({"params": adaptor_trainable_parameters, "lr": config.adaptor_learning_rate})
+
+    optimizer = torch.optim.AdamW(optimizer_parameter_groups, weight_decay=config.weight_decay)
+    scheduler = build_scheduler(optimizer, train_loader, config)
     start_epoch = 1
     if resume_checkpoint is not None:
-        start_epoch = load_stage2_training_state(resume_checkpoint, optimizer, device)
+        start_epoch = load_stage2_training_state(resume_checkpoint, adaptor, optimizer, scheduler, device)
 
     if is_main_process():
         config.output_dir.mkdir(parents=True, exist_ok=True)
@@ -760,6 +806,7 @@ def train() -> None:
             test_sampler.set_epoch(epoch)
 
         llm.train()
+        adaptor.train()
         running_loss = 0.0
         iterator = train_loader
         if is_main_process():
@@ -783,10 +830,11 @@ def train() -> None:
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
+            scheduler.step()
 
             running_loss += loss.item()
             if is_main_process():
-                iterator.set_postfix(loss=f"{loss.item():.4f}")
+                iterator.set_postfix(loss=f"{loss.item():.4f}", lr=f"{scheduler.get_last_lr()[0]:.2e}")
 
         train_loss_tensor = torch.tensor(running_loss, device=device)
         batch_count_tensor = torch.tensor(float(len(train_loader)), device=device)
@@ -818,10 +866,10 @@ def train() -> None:
             print(json.dumps(summary, ensure_ascii=False, indent=2))
             append_epoch_log(log_path, summary)
             if config.save_every_epoch:
-                save_checkpoint(config.output_dir, epoch, config, llm, tokenizer, optimizer)
+                save_checkpoint(config.output_dir, epoch, config, llm, adaptor, tokenizer, optimizer, scheduler)
 
     if is_main_process():
-        save_checkpoint(config.output_dir, config.epochs, config, llm, tokenizer, optimizer)
+        save_checkpoint(config.output_dir, config.epochs, config, llm, adaptor, tokenizer, optimizer, scheduler)
     test_loss = evaluate(
         test_loader,
         tokenizer,
