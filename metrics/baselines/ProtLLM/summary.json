@@ -1,0 +1,23 @@
+{
+  "model_name": "ProtLLM",
+  "num_test_samples": 7043,
+  "task_counts": {
+    "qa": 7043
+  },
+  "data_ratio": 0.2,
+  "filtered_samples": 349897,
+  "selected_samples": 69979,
+  "bleu_2": 57.71688201050691,
+  "bleu_4": 57.71688201050691,
+  "rouge_1": 57.716882010506886,
+  "rouge_2": 0.0,
+  "rouge_l": 57.716882010506886,
+  "meteor": 28.858441005253443,
+  "bertscore": 99.88154768943787,
+  "biomed_bertscore": 94.81785893440247,
+  "exact_match": 57.716882010506886,
+  "reference_experiment_dir": "outputs/stage2/usePretoken",
+  "evaluation_scope": "qa only",
+  "protein_model_checkpoint": "baseLines/ProtLLM/ckpt/protst_esm2.pth",
+  "pretrain_checkpoint_dir": "baseLines/ProtLLM/ckpt/protllm"
+}

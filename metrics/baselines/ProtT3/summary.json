@@ -1,0 +1,27 @@
+{
+  "model_name": "ProtT3",
+  "num_test_samples": 12116,
+  "task_counts": {
+    "caption": 5073,
+    "qa": 7043
+  },
+  "data_ratio": 0.2,
+  "filtered_samples": 349897,
+  "selected_samples": 69979,
+  "bleu_2": 0.8073375294453208,
+  "bleu_4": 0.02504308886557457,
+  "rouge_1": 26.21395784855946,
+  "rouge_2": 0.15043127520069374,
+  "rouge_l": 25.986763961521618,
+  "meteor": 16.46023110064902,
+  "bertscore": 89.004385471344,
+  "biomed_bertscore": 85.00045537948608,
+  "exact_match": 0.0,
+  "reference_experiment_dir": "outputs/stage2/usePretoken",
+  "skipped_task_counts": {
+    "cdr": 1879
+  },
+  "sequence_policy": "concatenate antigen, heavy chain, and light chain without separators",
+  "caption_checkpoint": "/mnt/public/lb/projects/protein_llm/baseLines/ProtT3/checkpoints/swiss_ft.ckpt",
+  "qa_checkpoint": "/mnt/public/lb/projects/protein_llm/baseLines/ProtT3/checkpoints/pdbqa_ft.ckpt"
+}

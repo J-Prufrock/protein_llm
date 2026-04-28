@@ -1,0 +1,23 @@
+{
+  "model_name": "InstructProtein",
+  "num_test_samples": 13995,
+  "task_counts": {
+    "caption": 5073,
+    "qa": 7043,
+    "cdr": 1879
+  },
+  "data_ratio": 0.2,
+  "filtered_samples": 349897,
+  "selected_samples": 69979,
+  "bleu_2": 0.5825444818181845,
+  "bleu_4": 0.013943668885061981,
+  "rouge_1": 0.6997345032035,
+  "rouge_2": 0.006735315295184916,
+  "rouge_l": 0.6681175848008802,
+  "meteor": 3.3394250275300075,
+  "bertscore": 71.06999158859253,
+  "biomed_bertscore": 47.826582193374634,
+  "exact_match": 0.0,
+  "reference_experiment_dir": "outputs/stage2/usePretoken",
+  "model_id": "hicai-zju/InstructProtein"
+}
